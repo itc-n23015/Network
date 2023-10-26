@@ -1,0 +1,52 @@
+3.3　ルータはどこ？
+　同じネットワークのセグメントに所属するIPアドレス同士は、基本的にルータがいなくても通信できる。
+3.2のケースでは、vethインターフェイスのペアに同じネットワークのセグメントのIPアドレスが付与されていた。
+そのためルータがいなくても通信できた。
+　逆に言えば、セグメントが違う相手と通信したいときはルータが必要になるということ
+
+3.4 ルータを入れてみよう
+新しいNetwork Namespace作成する。
+	sudo ip netns add ns1
+	sudo ip netns add router
+	sudo ip netns add ns2
+
+それぞれのNetwork Namespace同士をつなぐvethインターフェイスを作成。
+	sudo ip link add ns1-veth0 type veth peer name gw-veth0
+	sudo ip link add ns2-veth0 type veth peer name gw-veth1
+
+作成したvethインターフェイスを、それぞれのNetwork Namespaceに所属させる。
+	sudo ip link set ns1-veth0 netns ns1
+	sudo ip link set gw-veth0 netns router
+	sudo ip link set gw-veth1 netns router
+	sudo ip link set ns2-veth0 netns ns2
+
+所属させたvethインターフェイスをUPの状態にする。
+	sudo ip netns exec ns1 ip link set ns1-veth0 up
+	sudo ip netns exec router ip link set gw-veth0 up
+	sudo ip netns exec router ip link set gw-veth1 up
+	sudo ip netns exec ns2 ip link set ns2-veth0 up
+
+IPアドレスの設定。
+ns1とrouterの間から設定していく。両者は192.0.2.o/24という同じセグメントに所属している。
+	sudo ip netns exec ns1 ip address add 192.0.2.1/24 dev ns1-veth0
+	sudo ip netns exec router ip address add 192.0.2.254/24 dev gw-veth0
+
+続いてns2とrouterの間を設定していく。両者は198.51.100.0/24という同じセグメントに所属している。
+	sudo ip netns exec router ip address add 198.51.100.254/24 dev gw-veth1
+	sudo ip netns exec ns2 ip address add 198.51.100.1/24 dev ns2-veth0
+
+3.4.1　ルータ越しに通信
+　ルータを介してセグメントを超えた通信ができるかpingを投げてみよう。
+	sudo ip netns exec ns1 ping -c 198.51.100.1 -I 192.0.2.1
+＊なお、この試みは失敗する。
+現在のNetwork Namespaceのルーティングテーブルを確認してみよう。
+	sudo ip netns exec ns1 ip route show
+192.0.2.0/24宛はns1-veth0というネットワークインターフェイスで通信するという内容しかない。原因はこれ。
+パケットの送信先である198.51.100.1はどのルーティングエントリの宛先にも一致しない。
+
+ns1にルーティングエントリを追加する。 ip route addサブコマンドをつかう。
+	sudo ip netns execc ns1 ip route add 198.51.100.1 via 192.0.2.254
+
+pingコマンドを実行してもまだ、パケットロス100%になるため以下のコマンドを使う
+	sudo ip netns exec router sysctl net.ipv4.ip_forward=1
+改めてpingコマンドを使うとうまく行く。

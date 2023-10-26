@@ -1,0 +1,38 @@
+三章　Network Namespace
+
+3.1　使ってみよう
+	sudo ip netns add helloworld
+ip netns addというサブコマンドを使うと、新しくNetwork Namespaceを作れる。
+その後に続く helloworldという文字列は、作成するNetwork Namespaceにつける名前。
+作られたNetwork Namespaceは、 ip netns list サブコマンドで確認できる。
+
+不要になった Network Namespace 削除するには ip netns delete サブコマンドを使う。もしくは、Linuxを再起動すれば削除できる。
+
+3.2　つないでみよう
+	sudo ip netns add ns1
+	sudo ip netns add ns2
+上のコマンドでns1とns2という名前のNetwork Namespaceができる。これらは、お互いにネットワーク的に独立している。
+両者をつなぐにはveth(Virtual Ethernet Device)という仮想的なネットワークインターフェイスを使う。vethを作るには ip link add というサブコマンドを使う。
+	sudo ip link add ns1-veth0 type veth peer name ns2-veth0
+これでvethのネットワークインターフェイスがつくられた。
+
+作成したvethインターフェイスはシステムの領域にしているため、Network Namespaceの領域に移す必要がある。
+そのためには、 ip link set サブコマンドを使うことで所属させることができる。
+	sudo ip link set ns1-veth0 netns ns1
+	sudo ip link set ns2-veth0 netns ns2
+
+IPを使って通信するにはIPアドレスが必要になる。つまり、vethインターフェイスにIPアドレスを付与しなければならない。
+ネットワークインターフェイスにIPアドレスを設定するには ip address add サブコマンドを使う。
+	sudo ip netns exec ns1 ip address add 192.0.2.1/24 dev ns1-veth0
+	sudo ip netns exec ns2 ip address add 192.0.2.2/24 dev ns2-veth0
+これで、vethインターフェイスにIPアドレスが付与された。
+が、まだ通信できない。vethインターフェイスのstateという項目がDOWNになっているため。
+
+確認方法
+	sudo ip netns exec ns1 ip link show ns1-veth0 | grep state
+
+ネットワークインターフェイスをUPに設定する。
+	sudo ip netns exec ns1 ip link set ns1-veth0 up
+	sudo ip netns exec ns2 ip link set ns2-veth0 up
+
+これで準備完了。pingを送って疎通が確認できたら。うまくいっている。
